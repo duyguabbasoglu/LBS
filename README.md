@@ -1,4 +1,4 @@
-# Title buraya gelecek
+# Understanding Loneliness as a Multidimensional Burden Through Demographic Patterns, Health Pathways, and Measurement Consistency
 
 ## Contents
 
@@ -10,6 +10,6 @@
 
 -   **data** : Raw datasets used in the analysis
 -   **scripts** : Supporting R scripts from previous homeworks and preprocessing steps
--   **plots** : Figures used in the paper
+-   **visuals** : Figures used in the paper
 -   **archive** : Previous homework submissions
 -   **LabProject/** : CTIS 365 Lab Project homework (not related to the term paper)

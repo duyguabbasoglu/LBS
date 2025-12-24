@@ -72,7 +72,52 @@ df <- df %>%
 #----
 # DESCRIPTIVE STATISTICS
 
+numeric_vars <- df %>%
+  dplyr::select(age, loneliness_direct, health_general, feelings_depr)
 
+# Her değişken için istatistik fonksiyonu
+stats_fun <- function(x) {
+  c(
+    N       = sum(!is.na(x)),
+    Minimum = min(x, na.rm = TRUE),
+    Q1      = as.numeric(quantile(x, 0.25, na.rm = TRUE)),
+    Mean    = mean(x, na.rm = TRUE),
+    Median  = median(x, na.rm = TRUE),
+    Q3      = as.numeric(quantile(x, 0.75, na.rm = TRUE)),
+    Maximum = max(x, na.rm = TRUE),
+    SD      = sd(x, na.rm = TRUE)
+  )
+}
+
+numeric_summary <- sapply(numeric_vars, stats_fun)
+numeric_summary <- as.data.frame(numeric_summary)
+
+numeric_summary$Statistic <- rownames(numeric_summary)
+
+numeric_summary <- numeric_summary %>%
+  dplyr::select(Statistic, dplyr::everything()) %>%
+  dplyr::mutate(dplyr::across(-Statistic, ~ round(as.numeric(.), 2)))
+
+print(numeric_summary)
+
+table_g <- tibble::tibble(
+  Statistic = c(
+    "N",
+    "Minimum",
+    "25th Percentile (Q1)",
+    "Mean",
+    "Median",
+    "75th Percentile (Q3)",
+    "Maximum",
+    "Standard Deviation"
+  ),
+  Age = c(25634, 16, 32, 44.39, 44, 55, 91, 15.20),
+  `Loneliness (Direct)` = c(24601, 1.00, 3.00, 3.84, 4.00, 5.00, 5.00, 1.12),
+  Health = c(25298, 1.00, 2.00, 2.51, 2.00, 3.00, 5.00, 0.96),
+  Depression = c(25262, 1.00, 3.00, 4.18, 4.00, 6.00, 6.00, 1.48)
+)
+
+#write.csv(table_g, "DescriptiveStatistics.csv",row.names = FALSE, fileEncoding = "UTF-8")
 
 #----
 #GRAPHS
@@ -111,6 +156,130 @@ graph_df <- df %>%
   )
 
 names(graph_df)
+
+#----
+# LBS CALCULATION (0–100)
+# Normalize function
+normalize <- function(x) {
+  (x - min(x, na.rm = TRUE)) /
+    (max(x, na.rm = TRUE) - min(x, na.rm = TRUE))
+}
+
+# --- 1) Loneliness components (UCLA + DJG + Direct) -> LS
+df <- df %>%
+  mutate(
+    ucla_raw  = loneliness_ucla_a + loneliness_ucla_b + loneliness_ucla_c,
+    ucla_norm = normalize(ucla_raw),
+    
+    djg_raw   = rowSums(dplyr::select(., dplyr::starts_with("loneliness_djg")),
+                        na.rm = TRUE),
+    djg_norm  = normalize(djg_raw),
+    
+    direct_norm = normalize(loneliness_direct),
+    
+    LS = 0.4 * ucla_norm + 0.3 * djg_norm + 0.3 * direct_norm
+  )
+
+# --- 2) Health Risk Score (HRS)
+df <- df %>%
+  mutate(
+    HRS = 0.6 * normalize(feelings_depr) +
+      0.4 * normalize(health_general)
+  )
+
+# --- 3) Demographic Vulnerability Weight (DVW)
+df <- df %>%
+  mutate(
+    age_w = case_when(
+      age_group == "16-30" ~ 0.20,
+      age_group == "31-45" ~ 0.30,
+      age_group == "46-60" ~ 0.40,
+      age_group == "61-75" ~ 0.50,
+      age_group == "75+"   ~ 0.60,
+      TRUE ~ NA_real_
+    ),
+    gender_w = case_when(
+      gender == 1 ~ 0.30,
+      gender == 2 ~ 0.40,
+      gender == 3 ~ 0.35,
+      TRUE ~ NA_real_
+    ),
+    education_w = case_when(
+      education == 1 ~ 0.60,
+      education == 2 ~ 0.50,
+      education == 3 ~ 0.40,
+      education == 4 ~ 0.30,
+      education == 5 ~ 0.20,
+      TRUE ~ NA_real_
+    ),
+    DVW = (age_w + gender_w + education_w) / 3
+  )
+
+# --- 4) Final LBS + 0–100 scaling
+df <- df %>%
+  mutate(
+    LBS        = LS * (0.6 * HRS + 0.4 * DVW),
+    LBS_scaled = 100 * normalize(LBS)
+  )
+
+# gender order (Male → Female → Other)
+df <- df %>%
+  mutate(
+    gender_lbl = case_when(
+      gender_lbl %in% c("In another way", "Other") ~ "Other",
+      TRUE ~ as.character(gender_lbl)
+    ),
+    gender_lbl = factor(gender_lbl,
+                        levels = c("Male", "Female", "Other"))
+  )
+
+# --- 5) Heatmap: Age Group × Gender
+heat_age_gender <- df %>%
+  filter(
+    !is.na(age_group),
+    !is.na(gender_lbl),
+    !is.na(LBS_scaled)
+  ) %>%
+  group_by(age_group, gender_lbl) %>%
+  summarise(
+    LBS_mean = mean(LBS_scaled, na.rm = TRUE),
+    n = n(),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    label_text = paste0(sprintf("%.1f", LBS_mean), "\n", "n=", n)
+  )
+
+V_OPT <- "viridis"
+
+ggplot(heat_age_gender,
+       aes(x = gender_lbl, y = age_group, fill = LBS_mean)) +
+  geom_tile(color = "grey90", linewidth = 0.4) +
+  geom_text(aes(label = label_text),
+            size = 3.2, color = "white", lineheight = 0.9) +
+  scale_fill_viridis_c(
+    name   = "Mean LBS",
+    option = V_OPT,
+    begin  = 0.25,
+    end    = 0.85,
+    breaks = seq(35, 45, by = 2.5),
+    labels = scales::number_format(accuracy = 0.1)
+  ) +
+  labs(
+    
+    x = "Gender",
+    y = "Age group"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title = element_text(face = "bold", size = 14),
+    plot.subtitle = element_text(size = 11, color = "grey30"),
+    panel.grid = element_blank(),
+    legend.position = "bottom",
+    legend.key.width = unit(2.2, "cm"),
+    legend.text = element_text(size = 11)
+  ) +
+  coord_equal()
 
 #----
 # H1
@@ -220,31 +389,34 @@ print(g3)
 # Graph 4: High loneliness share by age group & gender (pyramid)
 age_gender_pyr <- graph_df %>%
   drop_na(ucla_level, gender_lbl, age_group) %>%
-  filter(gender_lbl %in% c("Female", "Male")) %>%
+  filter(gender_lbl %in% c("Male", "Female")) %>%
   group_by(age_group, gender_lbl) %>%
   summarise(
     p_high = mean(ucla_level == "High", na.rm = TRUE),
     .groups = "drop"
   ) %>%
   mutate(
-    p_signed = if_else(gender_lbl == "Male", -p_high, p_high)
+    p_signed = if_else(gender_lbl == "Female", -p_high, p_high)
   )
 
-gender_cols <- setNames(pal2, c("Female","Male"))
+gender_cols <- c("Male"   = pal2[1], "Female" = pal4[3])
+
+maxp <- max(age_gender_pyr$p_high, na.rm = TRUE)
 
 g4 <- ggplot(age_gender_pyr,
              aes(x = p_signed, y = age_group, fill = gender_lbl)) +
   geom_col(width = 0.7) +
-  coord_flip() +
-  scale_x_continuous(labels = function(x) percent(abs(x))) +
-  scale_fill_manual(values = gender_cols, name = "") +
-  labs(
-    x = "",
-    y = ""
+  scale_x_continuous(
+    limits = c(-maxp, maxp),
+    labels = function(x) percent(abs(x))
   ) +
+  scale_fill_manual(values = gender_cols, name = "") +
+  labs(x = "", y = "") +
   theme_lbs
 
 print(g4)
+
+
 
 # HYPOTHESIS TESTING
 h2_df <- graph_df %>%
@@ -285,7 +457,7 @@ g2 <- ggplot(graph_df %>% drop_na(health_lbl),
   scale_color_viridis_d(option = V_OPT, end = 0.9, name = "Health") +
   labs(x = "Age", y = "UCLA score") +
   theme_lbs +
-  theme(legend.position = "right")
+  theme(legend.position = "bottom")
 
 print(g2)
 
@@ -319,9 +491,10 @@ g5 <- ggplot(donut_df, aes(x = 2, y = pct, fill = lifestyle_cluster)) +
   scale_fill_manual(values = life_cols, name = "Lifestyle") +
   labs(x = NULL, y = NULL) +
   theme_void(base_size = 12) +
-  theme(legend.position = "right")
+  theme(legend.position = "bottom")
 
 print(g5)
+
 
 # HYPOTHESIS TESTING
 h3_df <- graph_df %>%
@@ -424,10 +597,12 @@ affect_df_h4 <- graph_df %>%
     .groups = "drop"
   )
 
+g7_cols <- setNames(pal4[2:4], levels(affect_df_h4$instab_group))
+
 g7 <- ggplot(affect_df_h4, aes(x = instab_group, y = p_high_loneliness, fill = instab_group)) +
   geom_col(alpha = 0.9) +
   scale_y_continuous(labels = percent_format()) +
-  scale_fill_viridis_d(option = V_OPT, end = 0.9, guide = "none") +
+  scale_fill_manual(values = g7_cols, guide = "none") +
   labs(
     x = "Affective instability",
     y = "Share with high UCLA loneliness"

@@ -12,4 +12,4 @@
 -   **scripts** : Supporting R scripts from previous homeworks and preprocessing steps
 -   **visuals** : Figures used in the paper
 -   **archive** : Previous homework submissions
--   **LabProject/** : CTIS 365 Lab Project homework (not related to the term paper)
+-   **LabProject** : CTIS 365 Lab Project homework (not related to the term paper)
